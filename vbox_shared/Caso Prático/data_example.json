@@ -1,0 +1,7 @@
+{
+    "id": "Porto.2016-11-30T07-00-00.00Z",
+    "type": "WeatherObserved",
+    "dateObserved": "2016-11-30T07:00:00.00Z",
+    "temperature": 24.10,
+    "relativeHumidity": 69.00
+}
