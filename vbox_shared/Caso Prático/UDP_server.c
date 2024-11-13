@@ -18,6 +18,10 @@
 #include "utils.h"
 #include "smart_data.h"
 
+/*
+ To add compilation flags to a VS Code environment, hit CTRL+SHIFT+P and type tasks, select your compiler (gcc) and insert into the "args".
+*/
+
 #define BUF_SIZE 999
 #define SERVER_PORT "9999"
 #define MAX_THREADS 4
@@ -34,6 +38,9 @@
 #define MIN_BOUND_TEMPERATURE 0
 #define MIN_BOUND_HUMIDITY 20
 #define MAX_BOUND_HUMIDITY 80
+#define MARGIN_ERROR_MS 50
+#define QOS_AT_LEAST_ONCE 1
+#define QOS_EXACTLY_ONCE 2
 
 /*
 TODO:
@@ -73,6 +80,7 @@ typedef struct{
 } ThreadPool;
 
 struct BinaryTreeNode *database;
+struct BinaryTreeNode *packet_database;
 pthread_mutex_t stdout_mutex;
 pthread_mutex_t tree_size_mutex;
 pthread_cond_t signal;
@@ -116,10 +124,7 @@ void retrieve_data_from_json(cJSON* json, int type, char* field, smart_data_t* c
     }
 }
 
-void alert_anomaly(double value, int bound, char* verb){
-    char* alert = (char*)calloc(100, sizeof(char));
-    sprintf(alert, "Temperature %s the usual rate of %d with %.2f", verb, bound, value);
-    log_info(alert);
+void publish_mqtt(char* alert){
     MQTTClient_message pubmsg = MQTTClient_message_initializer;
     MQTTClient_deliveryToken token;
 
@@ -130,26 +135,57 @@ void alert_anomaly(double value, int bound, char* verb){
 
     int rv;
     if((rv = MQTTClient_publishMessage(mqtt_client, MQTT_TOPIC, &pubmsg, &token)) != MQTTCLIENT_SUCCESS){
-        char msg[strlen("Message was not published. Error Code: ") + 2];
-        sprintf(msg, "Message was not published. Error Code: %d", rv);
+        char msg[strlen("Message was not published to the command center. Error Code: ") + 2];
+        sprintf(msg, "Message was not published to the command center. Error Code: %d", rv);
         log_error(msg);
     }
     // rc = MQTTClient_waitForCompletion(mqtt_client, token, MQTT_TIMEOUT);
 }
 
-void calculate_difference(double* temperature, double* humidity1, int size){
+void alert_anomaly(double value, int bound, char* verb){
+    char* alert = (char*)calloc(100, sizeof(char));
+    sprintf(alert, "Temperature %s the usual rate of %d with %.2f", verb, bound, value);
+    log_warning(alert);
+    publish_mqtt(alert);
+}
 
-    double tempDiff = abs(temperature1 - temperature2);
-    double humiDiff = abs(humidity1 - humidity2);
-    if(tempDiff > MAX_BOUND_TEMPERATURE)
-        alert_anomaly(tempDiff, MAX_BOUND_TEMPERATURE, "is above");
-    else if(tempDiff < MIN_BOUND_TEMPERATURE)
-        alert_anomaly(tempDiff, MIN_BOUND_TEMPERATURE, "is below");
+void alert_anomaly_generic(char* alert){
+    log_warning(alert);
+    publish_mqtt(alert);
+}
+
+void calculate_difference(double* temperature, double* humidity, int size){
+
+    if(size == 1){
+        if(*(temperature) > MAX_BOUND_TEMPERATURE)
+            alert_anomaly(*(temperature), MAX_BOUND_TEMPERATURE, "is above");
+        else if(*(temperature) < MIN_BOUND_TEMPERATURE)
+            alert_anomaly(*(temperature), MIN_BOUND_TEMPERATURE, "is below");
         
-    if(humiDiff > MAX_BOUND_HUMIDITY)
-        alert_anomaly(humiDiff, MAX_BOUND_HUMIDITY, "is above");
-    else if(humiDiff < MIN_BOUND_HUMIDITY)
-        alert_anomaly(humiDiff, MIN_BOUND_HUMIDITY, "is below");
+        if(*(humidity) > MAX_BOUND_HUMIDITY)
+            alert_anomaly(*(humidity), MAX_BOUND_HUMIDITY, "is above");
+        else if(*(humidity) < MIN_BOUND_HUMIDITY)
+            alert_anomaly(*(humidity), MIN_BOUND_HUMIDITY, "is below");
+        return;
+    }
+
+    double tempDiff, humiDiff;
+    for(int i=0;i<=size/2;i++){
+        for(int j=i+1;j<size;j++){
+            tempDiff = abs(*(temperature+i) - *(temperature+j));
+            humiDiff = abs(*(humidity+i) - *(humidity+j));
+
+            if(tempDiff > MAX_BOUND_TEMPERATURE)
+                alert_anomaly(tempDiff, MAX_BOUND_TEMPERATURE, "is above");
+            else if(tempDiff < MIN_BOUND_TEMPERATURE)
+                alert_anomaly(tempDiff, MIN_BOUND_TEMPERATURE, "is below");
+            
+            if(humiDiff > MAX_BOUND_HUMIDITY)
+                alert_anomaly(humiDiff, MAX_BOUND_HUMIDITY, "is above");
+            else if(humiDiff < MIN_BOUND_HUMIDITY)
+                alert_anomaly(humiDiff, MIN_BOUND_HUMIDITY, "is below");
+        }
+    }
 }
 
 /**
@@ -169,28 +205,42 @@ void* handle_client_request_master(void *arg){
         while(queue_size(&queue) < tree_size())
             pthread_cond_wait(&signal, &tree_size_mutex);
                 
+        
         int size = tree_size();
-        double temperatures[size], humidities[size];
-        smart_data_t* item;
-        int degraded_sensor = 0;
-        char msg[20];
-
+        smart_data_t* items = (smart_data_t*)calloc(size, sizeof(smart_data_t));
         for(int i=0;i<size;i++){
-            item = peek(&queue);
-            if(item == NULL){
-                degraded_sensor++;
-                sprintf(msg, "There are %d sensors degraded.", degraded_sensor);
-                log_warning(msg);
-            }else{
-                temperatures[i] = item->temperature;
-                humidities[i] = item->humidity;
-            }
+            *(items+i) = *(peek(&queue));
             dequeue(&queue);
         }
+        pthread_mutex_unlock(&tree_size_mutex);
 
+        // If the queue has as much items as the database size, but 
+        // one of the sensors is broken, it means that an alert must
+        // be sent. We check if the sensors are transmitting if the 
+        // first "size" items in the queue have a max margin error. 
+
+        double temperatures[size], humidities[size];
+
+        int sensor_degraded = 0;
+        for(int i=0;i<=size/2;i++){
+            temperatures[i] = (items+i)->temperature;
+            humidities[i] = (items+i)->humidity;
+            for(int j=i+1;j<size;j++)
+                if(abs((items+i)->timestamp - (items+j)->timestamp) > MARGIN_ERROR_MS){
+                    alert_anomaly_generic("A sensor is degraded");
+                    sensor_degraded = 1;
+                    break;
+                }
+            if(sensor_degraded)
+                break;
+        }
+        if(sensor_degraded)
+            continue;    
+        
         calculate_difference(temperatures, humidities, size);
         
-        pthread_mutex_unlock(&tree_size_mutex);
+
+        // pthread_mutex_unlock(&tree_size_mutex);
         pthread_mutex_lock(&stdout_mutex);
         
         pthread_mutex_unlock(&stdout_mutex);
@@ -422,24 +472,39 @@ int main(void){
         // If it's the first value, we initialize the database. The "entry.value = atoi(line1);" is present in the first two conditions,
         // because it means that is going to be the first request from a new client. The first request always have the QoS that the client
         // wants to establish.
-        if (database == NULL){
+        if (database == NULL || (node = searchNode(database, cliIPtext)) == NULL){ // If the node is not found, we insert it.
             entry.value = atoi(line1);
             database = insertNode(database, entry);
             char msg[40];
             sprintf(msg, "New client %s with QoS %d", entry.key, entry.value);
             log_info(msg);
             continue;
-        }
-        else if ((node = searchNode(database, cliIPtext)) == NULL){ // If the node is not found, we insert it.
-            entry.value = atoi(line1);
-            database = insertNode(database, entry);
-            char msg[40];
-            sprintf(msg, "New client %s with QoS %d", entry.key, entry.value);
-            log_info(msg);
-            continue;
-        }
-        else // If the node was found, we set the QoS to the specified.
+        }else // If the node was found, we set the QoS to the specified.
             qos = node->key.value;
+
+        if(qos == QOS_AT_LEAST_ONCE){
+            sendto(sock, "ACK\n", 4, 0, (struct sockaddr *)&client, adl); // Flags (like MSG_CONFIRM) does not work properly with UDP.
+        }else if(qos == QOS_EXACTLY_ONCE){
+            if(searchNode(packet_database, cliPortText) != NULL){
+                sendto(sock, "APP\n", 4, 0, (struct sockaddr *)&client, adl); // APP -> Already processed.
+                continue;
+            }
+            kvalue_t pack;
+            pack.key = (char*)calloc(strlen(cliPortText), sizeof(char));
+            strcpy(pack.key, cliPortText);
+            pack.value = atoi(cliPortText);
+            packet_database = insertNode(packet_database, pack);
+            sendto(sock, "ACK\n", 4, 0, (struct sockaddr *)&client, adl);
+
+            /* Até que ponto é necessário fazer exatamente igual ao MQTT? Ao colocar um recvfrom, este pode ser interceptado por
+            outro sensor estragando o esquema. Ter uma "base de dados" com os identificadores dos pacotes, já faz bem o trabalho.
+
+            char* pubrel = (char*)calloc(7, sizeof(char));
+            recvfrom(sock, pubrel, 7, 0, (struct sockaddr *)&client, &adl);
+            
+            sendto(sock, "PUBCOMP\n", 8, 0, (struct sockaddr *)&client, adl);
+            */
+        }
 
         // 3. Submits the request to a thread from the previously initializated thread pool.
         threadPoolSubmit(&pool, handle_client_request_slave, line1);

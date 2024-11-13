@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
-//TODO: Insert node autobalancing (to ensure +/- O(log(n))).
+// TODO: Update tree height on insert/remove time, and update the height procedure.
 
 typedef struct{
     char* key;
@@ -15,6 +16,7 @@ struct BinaryTreeNode {
 };
 
 int size = 0;
+int height = 0;
 pthread_mutex_t size_mutex;
 
 void init(void) __attribute__((constructor));
@@ -23,14 +25,71 @@ void init(void) {
     pthread_mutex_init(&size_mutex, NULL);
 }
 
+int tree_height(struct BinaryTreeNode* root){
+    if(root == NULL)
+        return 0;
+    return fmax(tree_height(root->left), tree_height(root->right)) + 1;
+}
+
+int balanceFactor(struct BinaryTreeNode* node){
+    return tree_height(node->left) - tree_height(node->right);
+}
+
+struct BinaryTreeNode* rightRotation(struct BinaryTreeNode* node){
+    struct BinaryTreeNode* leftSon = node->left;
+
+    node->left = leftSon->right;
+    leftSon->right = node;
+
+    node = leftSon;
+
+    return node;
+}
+
+struct BinaryTreeNode* leftRotation(struct BinaryTreeNode* node){
+    struct BinaryTreeNode* rightSon = node->right;
+
+    node->right = rightSon->left;
+    rightSon->left = node;
+
+    node = rightSon;
+
+    return node;
+}
+
+struct BinaryTreeNode* twoRotations(struct BinaryTreeNode* node){
+    if(balanceFactor(node) < 0){
+        node->left = leftRotation(node->left);
+        node = rightRotation(node);
+    }else{
+        node->right = rightRotation(node->right);
+        node = leftRotation(node);
+    }
+    return node;
+}
+
+struct BinaryTreeNode* balanceNode(struct BinaryTreeNode* node){
+    int bf = balanceFactor(node);
+
+    if(bf < -1){
+        if(balanceFactor(node->left) + bf > bf)
+            return twoRotations(node);
+        else
+            return rightRotation(node);
+    }else if (bf > 1){
+        if(balanceFactor(node->right) + bf < bf)
+            return twoRotations(node);
+        else
+            return leftRotation(node);
+    }
+    return node;
+}
+
 struct BinaryTreeNode* newNodeCreate(kvalue_t value) {
     struct BinaryTreeNode* temp = (struct BinaryTreeNode*)malloc(
         sizeof(struct BinaryTreeNode));
     temp->key = value;
     temp->left = temp->right = NULL;
-    pthread_mutex_lock(&size_mutex);
-    size = 1;
-    pthread_mutex_unlock(&size_mutex);
     return temp;
 }
 
@@ -56,6 +115,7 @@ struct BinaryTreeNode* insertNode(struct BinaryTreeNode* node, kvalue_t value){
     else if(strcmp(value.key, node->key.key) > 0)
         node->right = insertNode(node->right, value);
 
+    node = balanceNode(node);
     return node;
 }
 
@@ -71,9 +131,11 @@ struct BinaryTreeNode* deleteNode(struct BinaryTreeNode* node, kvalue_t value){
 
     if(strcmp(value.key, node->key.key) < 0){
         node->left = deleteNode(node->left, value);
+        node = balanceNode(node);
         return node;
     }else if(strcmp(value.key, node->key.key) > 0){
         node->right = deleteNode(node->right, value);
+        node = balanceNode(node);
         return node;
     }
     
@@ -82,7 +144,7 @@ struct BinaryTreeNode* deleteNode(struct BinaryTreeNode* node, kvalue_t value){
     pthread_mutex_unlock(&size_mutex);
     struct BinaryTreeNode* n = smallestElement(node->right);
 
-    if(n == NULL)\
+    if(n == NULL)
         return NULL;
 
     n->left = node->left;

@@ -10,6 +10,7 @@ typedef struct{
     char *type;
     double temperature;
     double humidity;
+    long timestamp;
 } smart_data_t;
 
 #endif
