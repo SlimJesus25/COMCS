@@ -7,6 +7,7 @@ typedef struct{
     char *dateObserved;
     char *id;
     char *location;
+    char *country;
     char *type;
     double temperature;
     double humidity;

@@ -2,7 +2,7 @@
 #include <stdbool.h>
 #include "smart_data.h"
 
-#define MAX_SIZE 100
+#define MAX_SIZE 10000
 
 typedef struct {
      smart_data_t items[MAX_SIZE];
