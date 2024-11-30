@@ -31,30 +31,20 @@
 #define MQTT_PASSWORD "Ricardo1"
 #define ID "alert_server"
 #define MQTT_PAYLOAD 100
-#define MQTT_TOPIC "/comcs/g04/datamodel"
+#define MQTT_TOPIC "/comcs/g04/datamodel/alert"
 #define MQTT_TIMEOUT 10000L
 #define JSON_STRING 0
 #define JSON_DOUBLE 1
 #define JSON_OBJECT 2
 #define SMART_DATA_FIELDS 6
-#define MAX_BOUND_TEMPERATURE 25
+#define MAX_BOUND_TEMPERATURE 2
 #define MIN_BOUND_TEMPERATURE 0
 #define MIN_BOUND_HUMIDITY 20
 #define MAX_BOUND_HUMIDITY 80
 #define MARGIN_ERROR_MS 4500
 #define QOS_AT_LEAST_ONCE 1
 #define QOS_EXACTLY_ONCE 2
-#define CLIENT_CERTIFICATE "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/ca.crt"
-#define CLIENT_KEY "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/ca.pem"
-#define ROOT_CA "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/root_ca.crt"
-
-
-/*
-TODO: Consider what to do:
-1 - Utilizar a função "pthread_cond_timedwait" com um abstime de 1 segundo e na ocasião de um sensor falhar, este deve reportar.
-2 - Utiliar a função "pthread_cond_wait" e este vai retirar dois pacotes da frente da fila, comparar o timestamp de ambos e se exceder
-o MARGIN_ERROR_MS, vai reportar.
-*/
+#define ROOT_CA "certs/ca/root_ca.crt"
 
 /*
 The connection structure, defines the user and the QoS that this user wants.
@@ -127,14 +117,12 @@ void publish_mqtt(char* alert){
     MQTTClient_message pubmsg = MQTTClient_message_initializer;
     MQTTClient_deliveryToken token;
 
-    // pubmsg.payload = (char*)calloc(strlen(alert) + 1, sizeof(char));
     pubmsg.payload = strdup(alert);
     if(pubmsg.payload == NULL){
         log_error("Memory allocation for payload failed");
         return;
     }
-    // pubmsg.payload = alert;
-    // strcpy((char*)pubmsg.payload, alert);
+    
     pubmsg.payloadlen = (int)strlen(alert);
     pubmsg.qos = 0;
     pubmsg.retained = 0;
@@ -253,23 +241,11 @@ void* handle_client_request_master(void *arg){
                 break;
         }
 
-        /*
-        free(do1);
-        free(do2);
-        free(items);
-        do1 = do2 = NULL;
-        items = NULL;
-        */
+    
         if(sensor_degraded)
             continue;    
         
         calculate_difference(temperatures, humidities, size);
-        
-
-        // pthread_mutex_unlock(&tree_size_mutex);
-        pthread_mutex_lock(&stdout_mutex);
-        
-        pthread_mutex_unlock(&stdout_mutex);
     }
 }
 
@@ -340,21 +316,6 @@ int main(void){
     
     conn_opts.username = MQTT_USERNAME;
     conn_opts.password = MQTT_PASSWORD;
-
-    /*
-    conn_opts.serverURIcount = 0;
-    ssl_opts.enableServerCertAuth = 1;
-    ssl_opts.trustStore = ROOT_CA;
-    ssl_opts.keyStore = CLIENT_CERTIFICATE;
-    // ssl_opts.privateKey = CLIENT_KEY;
-
-    conn_opts.ssl = &ssl_opts;
-
-    conn_opts.username = (char*)calloc(strlen(MQTT_USERNAME), sizeof(char));
-    conn_opts.password = (char*)calloc(strlen(MQTT_PASSWORD), sizeof(char));
-    strcpy(conn_opts.username, MQTT_USERNAME);
-    strcpy(conn_opts.password, MQTT_PASSWORD);
-    */
 
     ssl_opts.trustStore = ROOT_CA;
     ssl_opts.enableServerCertAuth = 1; // Enable server certificate validation
