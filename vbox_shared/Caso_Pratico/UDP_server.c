@@ -151,18 +151,8 @@ void alert_anomaly_generic(char* alert){
 
 void calculate_difference(double* temperature, double* humidity, int size){
 
-    if(size == 1){
-        if(*(temperature) > MAX_BOUND_TEMPERATURE)
-            alert_anomaly("Temperature", *(temperature), MAX_BOUND_TEMPERATURE, "is above");
-        else if(*(temperature) < MIN_BOUND_TEMPERATURE)
-            alert_anomaly("Temperature", *(temperature), MIN_BOUND_TEMPERATURE, "is below");
-        
-        if(*(humidity) > MAX_BOUND_HUMIDITY)
-            alert_anomaly("Humidity", *(humidity), MAX_BOUND_HUMIDITY, "is above");
-        else if(*(humidity) < MIN_BOUND_HUMIDITY)
-            alert_anomaly("Humidity", *(humidity), MIN_BOUND_HUMIDITY, "is below");
+    if(size == 1)
         return;
-    }
 
     double tempDiff, humiDiff;
     for(int i=0;i<=size/2;i++){
