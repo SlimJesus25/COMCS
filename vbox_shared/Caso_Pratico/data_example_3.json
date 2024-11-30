@@ -1,0 +1,11 @@
+{
+    "id": "Porto.2024-11-20T21:15:48.00Z",
+    "type": "WeatherObserved",
+    "dateObserved": "2024-11-20T21:15:48.00Z",
+    "address": {
+        "addressLocality": "Porto",
+        "addressCountry": "PT"
+    },
+    "temperature": 23.4,
+    "relativeHumidity": 70
+}

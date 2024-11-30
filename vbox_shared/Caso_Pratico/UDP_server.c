@@ -26,7 +26,7 @@
 #define MAX_TASKS 10
 #define BUF_SIZE 999
 #define SERVER_PORT "9999"
-#define MQTT_BROKER_ADDRESS "ssl:85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883" // 
+#define MQTT_BROKER_ADDRESS "192.168.1.154:1883" // ssl://85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883
 #define MQTT_USERNAME "Ricardo"
 #define MQTT_PASSWORD "Ricardo1"
 #define ID "alert_server"
@@ -44,9 +44,9 @@
 #define MARGIN_ERROR_MS 4500
 #define QOS_AT_LEAST_ONCE 1
 #define QOS_EXACTLY_ONCE 2
-#define CLIENT_CERTIFICATE "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso\ Prático/certs/ca/ca.crt"
-#define CLIENT_KEY "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso Prático/certs/ca/ca.key"
-#define ROOT_CA "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso Prático/certs/ca/root.crt"
+#define CLIENT_CERTIFICATE "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/ca.crt"
+#define CLIENT_KEY "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/ca.pem"
+#define ROOT_CA "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/root.pem"
 
 
 /*
@@ -341,11 +341,12 @@ int main(void){
     conn_opts.username = MQTT_USERNAME;
     conn_opts.password = MQTT_PASSWORD;
 
+
+    conn_opts.serverURIcount = 0;
     ssl_opts.enableServerCertAuth = 1;
     ssl_opts.trustStore = ROOT_CA;
     ssl_opts.keyStore = CLIENT_CERTIFICATE;
-    ssl_opts.privateKey = CLIENT_KEY;
-    // conn_opts.ssl->privateKey = CLIENT_KEY;
+    // ssl_opts.privateKey = CLIENT_KEY;
 
     conn_opts.ssl = &ssl_opts;
     
