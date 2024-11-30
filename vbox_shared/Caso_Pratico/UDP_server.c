@@ -26,12 +26,12 @@
 #define MAX_TASKS 10
 #define BUF_SIZE 999
 #define SERVER_PORT "9999"
-#define MQTT_BROKER_ADDRESS "192.168.1.154:1883" // ssl://85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883
+#define MQTT_BROKER_ADDRESS "ssl://85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883" // ssl://85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883
 #define MQTT_USERNAME "Ricardo"
 #define MQTT_PASSWORD "Ricardo1"
 #define ID "alert_server"
 #define MQTT_PAYLOAD 100
-#define MQTT_TOPIC "server/alert"
+#define MQTT_TOPIC "/comcs/g04/datamodel"
 #define MQTT_TIMEOUT 10000L
 #define JSON_STRING 0
 #define JSON_DOUBLE 1
@@ -46,7 +46,7 @@
 #define QOS_EXACTLY_ONCE 2
 #define CLIENT_CERTIFICATE "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/ca.crt"
 #define CLIENT_KEY "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/ca.pem"
-#define ROOT_CA "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/root.pem"
+#define ROOT_CA "/home/ricardo/Desktop/24-25/COMCS/COMCS/vbox_shared/Caso_Pratico/certs/ca/root_ca.crt"
 
 
 /*
@@ -341,7 +341,7 @@ int main(void){
     conn_opts.username = MQTT_USERNAME;
     conn_opts.password = MQTT_PASSWORD;
 
-
+    /*
     conn_opts.serverURIcount = 0;
     ssl_opts.enableServerCertAuth = 1;
     ssl_opts.trustStore = ROOT_CA;
@@ -349,13 +349,16 @@ int main(void){
     // ssl_opts.privateKey = CLIENT_KEY;
 
     conn_opts.ssl = &ssl_opts;
-    
-    /*
+
     conn_opts.username = (char*)calloc(strlen(MQTT_USERNAME), sizeof(char));
     conn_opts.password = (char*)calloc(strlen(MQTT_PASSWORD), sizeof(char));
     strcpy(conn_opts.username, MQTT_USERNAME);
     strcpy(conn_opts.password, MQTT_PASSWORD);
     */
+
+    ssl_opts.trustStore = ROOT_CA;
+    ssl_opts.enableServerCertAuth = 1; // Enable server certificate validation
+    conn_opts.ssl = &ssl_opts;
 
     if ((rc = MQTTClient_connect(mqtt_client, &conn_opts)) != MQTTCLIENT_SUCCESS){
         printf("Failed to connect, return code %d\n", rc);
@@ -373,8 +376,6 @@ int main(void){
     req.ai_flags = AI_PASSIVE; // local address
     err = getaddrinfo(NULL, SERVER_PORT, &req, &list);
     srand(time(NULL));
-
-    
 
     // Initialize thread pool.
     ThreadPool pool;
