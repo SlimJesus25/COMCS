@@ -28,15 +28,18 @@ void init(void) {
 int tree_height(struct BinaryTreeNode* root){
     if(root == NULL)
         return 0;
-    return fmax(tree_height(root->left), tree_height(root->right)) + 1;
+    return (int)fmax(tree_height(root->left), tree_height(root->right)) + 1;
 }
 
 int balanceFactor(struct BinaryTreeNode* node){
-    return tree_height(node->left) - tree_height(node->right);
+    if(node == NULL)
+        return 0;
+    return tree_height(node->right) - tree_height(node->left);
 }
 
 struct BinaryTreeNode* rightRotation(struct BinaryTreeNode* node){
     struct BinaryTreeNode* leftSon = node->left;
+
 
     node->left = leftSon->right;
     leftSon->right = node;
@@ -152,10 +155,8 @@ struct BinaryTreeNode* deleteNode(struct BinaryTreeNode* node, kvalue_t value){
     return n;
 }
 
-int tree_size(){
-    int s;
-    pthread_mutex_lock(&size_mutex);
-    s = size;
-    pthread_mutex_unlock(&size_mutex);
-    return s;
+int tree_size(struct BinaryTreeNode* root){
+    if(root == NULL)
+        return 0;
+    return tree_size(root->left) + tree_size(root->right) + 1;
 }

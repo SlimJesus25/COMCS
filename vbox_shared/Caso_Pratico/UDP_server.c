@@ -63,6 +63,9 @@ struct BinaryTreeNode *packet_database;
 // Mutex that protects the global queue.
 pthread_mutex_t tree_size_mutex;
 
+// Mutex that protects database.
+pthread_mutex_t database_mutex;
+
 // Cond that control accesses to the global queue.
 // The master thread is waiting to receive signals from slave threads.
 // The slave threads signals the master thread, everytime it enqueues an item.
@@ -132,6 +135,7 @@ void retrieve_data_from_json(cJSON* json, int type, char* field, smart_data_t* c
  * Publishes message "alert" to the broker MQTT_BROKER_ADDRESS, topic MQTT_TOPIC.
  */
 void publish_mqtt(char* alert){
+    strcat(alert, "\0");
     MQTTClient_message pubmsg = MQTTClient_message_initializer;
     MQTTClient_deliveryToken token;
 
@@ -203,17 +207,22 @@ void calculate_difference(double* temperature, double* humidity, int size){
 void* handle_client_request_master(void *arg){
     while(1){
 
-        while(tree_size() == 0)
+        while(tree_size(database) == 0)
             sleep(1);
+
+        int size = 0;
 
         // This barrier algorithm, ensures that this (master) thread
         // is going to read, only if the values are available.
         pthread_mutex_lock(&tree_size_mutex);
-        while(queue_size(&queue) < tree_size())
+        while(queue_size(&queue) < tree_size(database)){
+            pthread_mutex_lock(&database_mutex);
+            size = tree_size(database);
+            pthread_mutex_unlock(&database_mutex);
             pthread_cond_wait(&signal, &tree_size_mutex);
+        }
                 
         
-        int size = tree_size();
         smart_data_t* items = (smart_data_t*)calloc(size, sizeof(smart_data_t));
         for(int i=0;i<size;i++){
             *(items+i) = *(peek(&queue));
@@ -268,7 +277,6 @@ void handle_client_request_slave(void *arg){
     // 1. Parses the received data into a JSON object.
     cJSON *json = cJSON_Parse(line1);
 
-    
 
     if (json == NULL){
         const char *error_ptr = cJSON_GetErrorPtr();
@@ -286,7 +294,9 @@ void handle_client_request_slave(void *arg){
     for(int i=0;i<SMART_DATA_FIELDS;i++)
         retrieve_data_from_json(json, types[i], fields[i], conv_arg);
 
+    pthread_mutex_lock(&tree_size_mutex);
     enqueue(&queue, *(conv_arg));
+    pthread_mutex_unlock(&tree_size_mutex);
 
     pthread_cond_signal(&signal);
 
@@ -305,6 +315,11 @@ int main(void){
     bzero((char *)&req, sizeof(req));
 
     if(pthread_mutex_init(&tree_size_mutex, NULL) < 0){
+        log_error("Mutex was not created");
+        exit(EXIT_FAILURE);
+    }
+
+    if(pthread_mutex_init(&database_mutex, NULL) < 0){
         log_error("Mutex was not created");
         exit(EXIT_FAILURE);
     }
@@ -400,12 +415,14 @@ int main(void){
         // If it's the first value, we initialize the database. The "entry.value = atoi(line1);" is present in the first two conditions,
         // because it means that is going to be the first request from a new client. The first request always have the QoS that the client
         // wants to establish.
+        pthread_mutex_lock(&database_mutex);
         if (database == NULL || (node = searchNode(database, cliIPtext)) == NULL){ // If the node is not found, we insert it.
             entry.value = atoi(line1);
             database = insertNode(database, entry);
             char msg[40];
             sprintf(msg, "New client %s with QoS %d", entry.key, entry.value);
             log_info(msg);
+            pthread_mutex_unlock(&database_mutex);
             continue;
         }else // If the node was found, we set the QoS to the specified.
             qos = node->key.value;
@@ -415,6 +432,7 @@ int main(void){
         }else if(qos == QOS_EXACTLY_ONCE){
             if(searchNode(packet_database, cliPortText) != NULL){
                 sendto(sock, "APP\n", 4, 0, (struct sockaddr *)&client, adl); // APP -> Already processed.
+                pthread_mutex_unlock(&database_mutex);
                 continue;
             }
             kvalue_t pack;
@@ -424,6 +442,7 @@ int main(void){
             packet_database = insertNode(packet_database, pack);
             sendto(sock, "ACK\n", 4, 0, (struct sockaddr *)&client, adl);
         }
+        pthread_mutex_unlock(&database_mutex);
 
         // 3. Submits the request to a thread from the previously initializated thread pool.
         threadPoolSubmit(&pool, handle_client_request_slave, line1);
