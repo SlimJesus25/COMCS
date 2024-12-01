@@ -37,7 +37,7 @@
 #define SMART_DATA_FIELDS 6 // Quantity of fields waiting from the client's payload.
 #define MAX_BOUND_TEMPERATURE 2 // Max difference of temperatures that different payloads might have.
 #define MAX_BOUND_HUMIDITY 5 // Max difference of humidities that different payloads might have.
-#define MARGIN_ERROR_MS 4500 // Max time difference that two packets might have before considering a sensor is degraded.
+#define MARGIN_ERROR_MS 1000 // Max time difference that two packets might have before considering a sensor is degraded.
 #define QOS_AT_LEAST_ONCE 1 // Delivery Quality of Service at least once.
 #define QOS_EXACTLY_ONCE 2 // Delivery Quality of Service exactly once.
 #define ROOT_CA "certs/ca/root_ca.crt" // Root certificate to connect to Mosquitto broker.
@@ -197,6 +197,7 @@ void alert_anomaly(char* metric, double value, int bound, char* verb){
     sprintf(alert, "%s %s the usual rate of %d with %.2f", metric, verb, bound, value);
     log_warning(alert);
     publish_mqtt(alert);
+    free(alert);
 }
 
 /**
@@ -284,6 +285,7 @@ void* handle_client_request_master(void *arg){
                     sprintf(anomaly_msg, "A sensor is degraded (%ld milliseconds)", diff);
                     alert_anomaly_generic(anomaly_msg);
                     sensor_degraded = 1;
+                    free(anomaly_msg);
                     break;
                 }
             }
@@ -291,6 +293,7 @@ void* handle_client_request_master(void *arg){
                 break;
         }
 
+        free(items);
     
         if(sensor_degraded)
             continue;    
@@ -334,7 +337,7 @@ void handle_client_request_slave(void *arg){
 
     pthread_cond_signal(&signal);
 
-    free(conv_arg);
+    //free(conv_arg);
     // 4. Deletes and frees unused variables.
     cJSON_Delete(json);
 }
@@ -443,6 +446,8 @@ int main(void){
         }else // If the node was found, we set the QoS to the specified.
             qos = node->key.value;
 
+        free(entry.key);
+
         if(qos == QOS_AT_LEAST_ONCE){
             sendto(sock, "ACK\n", 4, 0, (struct sockaddr *)&client, adl); // Flags (like MSG_CONFIRM) does not work properly with UDP.
         }else if(qos == QOS_EXACTLY_ONCE){
@@ -457,6 +462,7 @@ int main(void){
             pack.value = atoi(cliPortText);
             packet_database = insertNode(packet_database, pack);
             sendto(sock, "ACK\n", 4, 0, (struct sockaddr *)&client, adl);
+            free(pack.key);
         }
         pthread_mutex_unlock(&database_mutex);
 
