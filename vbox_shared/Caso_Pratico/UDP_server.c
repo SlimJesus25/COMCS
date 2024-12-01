@@ -162,21 +162,22 @@ void retrieve_data_from_json(cJSON* json, int type, char* field, smart_data_t* c
  * Publishes message "alert" to the broker MQTT_BROKER_ADDRESS, topic MQTT_TOPIC.
  */
 void publish_mqtt(char* alert){
+    if(alert == NULL || strlen(alert) == 0){
+        log_error("Alert message undefined.");
+        return;
+    }
+
     strcat(alert, "\0");
+
     MQTTClient_message pubmsg = MQTTClient_message_initializer;
     MQTTClient_deliveryToken token;
 
-    pubmsg.payload = strdup(alert);
-    if(pubmsg.payload == NULL){
-        log_error("Memory allocation for payload failed");
-        return;
-    }
-    
+    pubmsg.payload = alert;
     pubmsg.payloadlen = (int)strlen(alert);
     pubmsg.qos = 0;
     pubmsg.retained = 0;
 
-    int rv;
+    int rv = 0;
     
     if((rv = MQTTClient_publishMessage(mqtt_client, MQTT_TOPIC, &pubmsg, NULL)) != MQTTCLIENT_SUCCESS){
         char msg[strlen("Message was not published to the command center. Error Code: ") + 2];
@@ -185,6 +186,7 @@ void publish_mqtt(char* alert){
         if(rv == MQTTCLIENT_DISCONNECTED){
             log_info("Trying to reconnect...");
             establish_mqtt_broker_connection();
+            log_info("Reconnected successfully!");
         }
     }
 }
@@ -197,7 +199,7 @@ void alert_anomaly(char* metric, double value, int bound, char* verb){
     sprintf(alert, "%s %s the usual rate of %d with %.2f", metric, verb, bound, value);
     log_warning(alert);
     publish_mqtt(alert);
-    free(alert);
+    // free(alert);
 }
 
 /**
@@ -285,7 +287,7 @@ void* handle_client_request_master(void *arg){
                     sprintf(anomaly_msg, "A sensor is degraded (%ld milliseconds)", diff);
                     alert_anomaly_generic(anomaly_msg);
                     sensor_degraded = 1;
-                    free(anomaly_msg);
+                    // free(anomaly_msg);
                     break;
                 }
             }
@@ -293,7 +295,7 @@ void* handle_client_request_master(void *arg){
                 break;
         }
 
-        free(items);
+        // free(items);
     
         if(sensor_degraded)
             continue;    
@@ -339,7 +341,7 @@ void handle_client_request_slave(void *arg){
 
     //free(conv_arg);
     // 4. Deletes and frees unused variables.
-    cJSON_Delete(json);
+    // cJSON_Delete(json);
 }
 
 int main(void){
@@ -446,7 +448,7 @@ int main(void){
         }else // If the node was found, we set the QoS to the specified.
             qos = node->key.value;
 
-        free(entry.key);
+        // free(entry.key);
 
         if(qos == QOS_AT_LEAST_ONCE){
             sendto(sock, "ACK\n", 4, 0, (struct sockaddr *)&client, adl); // Flags (like MSG_CONFIRM) does not work properly with UDP.
@@ -462,7 +464,7 @@ int main(void){
             pack.value = atoi(cliPortText);
             packet_database = insertNode(packet_database, pack);
             sendto(sock, "ACK\n", 4, 0, (struct sockaddr *)&client, adl);
-            free(pack.key);
+            // free(pack.key);
         }
         pthread_mutex_unlock(&database_mutex);
 
