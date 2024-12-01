@@ -23,28 +23,24 @@
  To add compilation flags to a VS Code environment, hit CTRL+SHIFT+P and type tasks, select your compiler (gcc) and insert into the "args".
 */
 
-#define MAX_TASKS 10
-#define BUF_SIZE 999
-#define SERVER_PORT "9999"
-#define MQTT_BROKER_ADDRESS "ssl://85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883" // ssl://85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883
-#define MQTT_USERNAME "Ricardo"
-#define MQTT_PASSWORD "Ricardo1"
-#define ID "alert_server"
-#define MQTT_PAYLOAD 100
-#define MQTT_TOPIC "/comcs/g04/datamodel/alert"
-#define MQTT_TIMEOUT 10000L
-#define JSON_STRING 0
-#define JSON_DOUBLE 1
-#define JSON_OBJECT 2
-#define SMART_DATA_FIELDS 6
-#define MAX_BOUND_TEMPERATURE 2
-#define MIN_BOUND_TEMPERATURE 0
-#define MIN_BOUND_HUMIDITY 20
-#define MAX_BOUND_HUMIDITY 80
-#define MARGIN_ERROR_MS 4500
-#define QOS_AT_LEAST_ONCE 1
-#define QOS_EXACTLY_ONCE 2
-#define ROOT_CA "certs/ca/root_ca.crt"
+#define MAX_TASKS 10 // Max tasks that the thread pool can process.
+#define BUF_SIZE 999 // Max size buffer from UDP socket can process.
+#define SERVER_PORT "9999" // Port that is listening for UDP packets.
+#define MQTT_BROKER_ADDRESS "ssl://85436a4edb0144a5b5c8e73335506dc1.s1.eu.hivemq.cloud:8883" // Mosquitto broker address and port (URI).
+#define MQTT_USERNAME "Ricardo" // Mosquitto username.
+#define MQTT_PASSWORD "Ricardo1" // Mosquitto password.
+#define ID "alert_server" // Mosquitto ID.
+#define MQTT_TOPIC "/comcs/g04/datamodel/alert" // Mosquitto topic that this server is going to publish.
+#define JSON_STRING 0 // Generic type to process fields.
+#define JSON_DOUBLE 1 // Generic type to process fields.
+#define JSON_OBJECT 2 // Generic type to process fields.
+#define SMART_DATA_FIELDS 6 // Quantity of fields waiting from the client's payload.
+#define MAX_BOUND_TEMPERATURE 2 // Max difference of temperatures that different payloads might have.
+#define MAX_BOUND_HUMIDITY 5 // Max difference of humidities that different payloads might have.
+#define MARGIN_ERROR_MS 4500 // Max time difference that two packets might have before considering a sensor is degraded.
+#define QOS_AT_LEAST_ONCE 1 // Delivery Quality of Service at least once.
+#define QOS_EXACTLY_ONCE 2 // Delivery Quality of Service exactly once.
+#define ROOT_CA "certs/ca/root_ca.crt" // Root certificate to connect to Mosquitto broker.
 
 /*
 The connection structure, defines the user and the QoS that this user wants.
@@ -58,19 +54,38 @@ typedef struct{
     int qos;
 } connection_t;
 
+// Database that contains all the clients. A client is someone that sends at least once packet.
 struct BinaryTreeNode *database;
-struct BinaryTreeNode *packet_database;
-pthread_mutex_t stdout_mutex;
+
+// Database that contains all the packet IDs. This is only used if, at least, one client has QoS exactly once.
+struct BinaryTreeNode *packet_database; 
+
+// Mutex that protects the global queue.
 pthread_mutex_t tree_size_mutex;
+
+// Cond that control accesses to the global queue.
+// The master thread is waiting to receive signals from slave threads.
+// The slave threads signals the master thread, everytime it enqueues an item.
 pthread_cond_t signal;
-int received_values;
+
+// Global queue that contains the received packets in a "smart_data.h" struct type.
 Queue queue;
+
+// Mosquitto client to connect.
 MQTTClient mqtt_client;
+
+// QoS defined by the client.
 int qos;
 
+// Smart data fields.
 char fields[SMART_DATA_FIELDS][20] = {{"type\0"}, {"id\0"}, {"dateObserved\0"}, {"address\0"}, {"temperature\0"}, {"relativeHumidity\0"}};
+
+// Smart data field types.
 int types[SMART_DATA_FIELDS] = {JSON_STRING, JSON_STRING, JSON_STRING, JSON_OBJECT, JSON_DOUBLE, JSON_DOUBLE};
 
+/**
+ * Decodes payload from the JSON format to struct "smart_data_t".
+ */
 void retrieve_data_from_json(cJSON* json, int type, char* field, smart_data_t* conv_arg){
 
     cJSON *attribute = cJSON_GetObjectItemCaseSensitive(json, field);
@@ -113,6 +128,9 @@ void retrieve_data_from_json(cJSON* json, int type, char* field, smart_data_t* c
     }
 }
 
+/**
+ * Publishes message "alert" to the broker MQTT_BROKER_ADDRESS, topic MQTT_TOPIC.
+ */
 void publish_mqtt(char* alert){
     MQTTClient_message pubmsg = MQTTClient_message_initializer;
     MQTTClient_deliveryToken token;
@@ -134,21 +152,29 @@ void publish_mqtt(char* alert){
         sprintf(msg, "Message was not published to the command center. Error Code: %d", rv);
         log_error(msg);
     }
-    // rc = MQTTClient_waitForCompletion(mqtt_client, token, MQTT_TIMEOUT);
 }
 
+/**
+ * This function invokes 'publish_mqtt'. It contains a generic text to temperature/humidity alerts.
+ */
 void alert_anomaly(char* metric, double value, int bound, char* verb){
-    char* alert = (char*)calloc(100, sizeof(char)); // strlen(metric) + strlen(verb) + strlen("  the usual rate of  with ") + ((int)ceil(log10(value))) + 4 + ((int)ceil(log10(bound))) + 1
+    char* alert = (char*)calloc(100, sizeof(char));
     sprintf(alert, "%s %s the usual rate of %d with %.2f", metric, verb, bound, value);
     log_warning(alert);
     publish_mqtt(alert);
 }
 
+/**
+ * This function invokes 'publish_mqtt'. It contains a generic text to a warning.
+ */
 void alert_anomaly_generic(char* alert){
     log_warning(alert);
     publish_mqtt(alert);
 }
 
+/**
+ * Calculates difference between temperatures and humidities received from the clients.
+ */
 void calculate_difference(double* temperature, double* humidity, int size){
 
     if(size == 1)
@@ -162,13 +188,9 @@ void calculate_difference(double* temperature, double* humidity, int size){
 
             if(tempDiff > MAX_BOUND_TEMPERATURE)
                 alert_anomaly("Temperature", tempDiff, MAX_BOUND_TEMPERATURE, "is above");
-            else if(tempDiff < MIN_BOUND_TEMPERATURE)
-                alert_anomaly("Temperature", tempDiff, MIN_BOUND_TEMPERATURE, "is below");
             
             if(humiDiff > MAX_BOUND_HUMIDITY)
                 alert_anomaly("Humidity", humiDiff, MAX_BOUND_HUMIDITY, "is above");
-            else if(humiDiff < MIN_BOUND_HUMIDITY)
-                alert_anomaly("Humidity", humiDiff, MIN_BOUND_HUMIDITY, "is below");
         }
     }
 }
@@ -218,11 +240,9 @@ void* handle_client_request_master(void *arg){
             for(int j=i+1;j<size;j++){
                 long diff;
                 if((diff = calculate_time_difference(*(ts+i), *(ts+j))) > MARGIN_ERROR_MS){
-                    // printf("Diff: %ld\nDO1: %s\nDO2: %s\nI1: %s\nI2: %s\n", diff, do1, do2, items->dateObserved, (items+1)->dateObserved);
                     char* anomaly_msg = (char*)calloc(strlen("A sensor is degraded ( milliseconds)") + (int)log10(diff) + 1, sizeof(char));
                     sprintf(anomaly_msg, "A sensor is degraded (%ld milliseconds)", diff);
                     alert_anomaly_generic(anomaly_msg);
-                    // free(anomaly_msg);
                     sensor_degraded = 1;
                     break;
                 }
