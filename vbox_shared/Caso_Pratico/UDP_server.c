@@ -86,6 +86,33 @@ char fields[SMART_DATA_FIELDS][20] = {{"type\0"}, {"id\0"}, {"dateObserved\0"}, 
 // Smart data field types.
 int types[SMART_DATA_FIELDS] = {JSON_STRING, JSON_STRING, JSON_STRING, JSON_OBJECT, JSON_DOUBLE, JSON_DOUBLE};
 
+
+/**
+ * Establishes client connection with MQTT broker.
+ */
+void establish_mqtt_broker_connection(){
+    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+    MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+    int rc;
+
+    MQTTClient_create(&mqtt_client, MQTT_BROKER_ADDRESS, ID,
+                      MQTTCLIENT_PERSISTENCE_NONE, NULL);
+
+    conn_opts.keepAliveInterval = 20;
+    conn_opts.cleansession = 1;
+    
+    conn_opts.username = MQTT_USERNAME;
+    conn_opts.password = MQTT_PASSWORD;
+
+    ssl_opts.trustStore = ROOT_CA;
+    ssl_opts.enableServerCertAuth = 1; // Enable server certificate validation
+    conn_opts.ssl = &ssl_opts;
+
+    if ((rc = MQTTClient_connect(mqtt_client, &conn_opts)) != MQTTCLIENT_SUCCESS){
+        printf("Failed to connect, return code %d\n", rc);
+        exit(-1);
+    }
+}
 /**
  * Decodes payload from the JSON format to struct "smart_data_t".
  */
@@ -155,6 +182,10 @@ void publish_mqtt(char* alert){
         char msg[strlen("Message was not published to the command center. Error Code: ") + 2];
         sprintf(msg, "Message was not published to the command center. Error Code: %d", rv);
         log_error(msg);
+        if(rv == MQTTCLIENT_DISCONNECTED){
+            log_info("Trying to reconnect...");
+            establish_mqtt_broker_connection();
+        }
     }
 }
 
@@ -215,12 +246,12 @@ void* handle_client_request_master(void *arg){
         // This barrier algorithm, ensures that this (master) thread
         // is going to read, only if the values are available.
         pthread_mutex_lock(&tree_size_mutex);
-        while(queue_size(&queue) < tree_size(database)){
+        do{
             pthread_mutex_lock(&database_mutex);
             size = tree_size(database);
             pthread_mutex_unlock(&database_mutex);
             pthread_cond_wait(&signal, &tree_size_mutex);
-        }
+        }while(queue_size(&queue) < size);
                 
         
         smart_data_t* items = (smart_data_t*)calloc(size, sizeof(smart_data_t));
@@ -271,12 +302,12 @@ void* handle_client_request_master(void *arg){
 
 void handle_client_request_slave(void *arg){
 
+    
     // 1. Casts the void (bytes) to char*.
     char *line1 = (char *)arg;
 
     // 1. Parses the received data into a JSON object.
-    cJSON *json = cJSON_Parse(line1);
-
+    cJSON *json = cJSON_ParseWithLength(line1, strlen(line1));
 
     if (json == NULL){
         const char *error_ptr = cJSON_GetErrorPtr();
@@ -284,6 +315,9 @@ void handle_client_request_slave(void *arg){
             log_error("Invalid JSON structure");
         else log_error("Unknown JSON error");
         cJSON_Delete(json);
+        return;
+    }else if(cJSON_IsNumber(json)){
+        log_error("Invalid JSON structure");
         return;
     }
     
@@ -329,27 +363,7 @@ int main(void){
         exit(EXIT_FAILURE);
     }
 
-    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
-    MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
-    int rc;
-
-    MQTTClient_create(&mqtt_client, MQTT_BROKER_ADDRESS, ID,
-                      MQTTCLIENT_PERSISTENCE_NONE, NULL);
-
-    conn_opts.keepAliveInterval = 20;
-    conn_opts.cleansession = 1;
-    
-    conn_opts.username = MQTT_USERNAME;
-    conn_opts.password = MQTT_PASSWORD;
-
-    ssl_opts.trustStore = ROOT_CA;
-    ssl_opts.enableServerCertAuth = 1; // Enable server certificate validation
-    conn_opts.ssl = &ssl_opts;
-
-    if ((rc = MQTTClient_connect(mqtt_client, &conn_opts)) != MQTTCLIENT_SUCCESS){
-        printf("Failed to connect, return code %d\n", rc);
-        exit(-1);
-    }
+    establish_mqtt_broker_connection();
 
     initializeQueue(&queue);
 
@@ -407,6 +421,8 @@ int main(void){
 
         // QoS is defined as 'Best Effort' by default.
         struct BinaryTreeNode *node;
+
+        memset(line1, '\0', sizeof(line1));
 
         // 2. Creates a mirror of the text line.
         for (i = 0; i < res; i++)
