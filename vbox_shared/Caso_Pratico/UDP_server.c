@@ -450,7 +450,7 @@ int main(void){
         if (database == NULL || (node = searchNode(database, cliIPtext)) == NULL){ // If the node is not found, we insert it.
             entry.value = atoi(line1);
             database = insertNode(database, entry);
-            char msg[40];
+            char msg[256];
             snprintf(msg, sizeof(msg), "New client %s with QoS %d", entry.key, entry.value);
             log_info(msg);
             pthread_mutex_unlock(&database_mutex);
