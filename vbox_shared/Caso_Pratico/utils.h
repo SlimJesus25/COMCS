@@ -14,7 +14,7 @@ void log_msg(char* message){
         return;
     time_t t = time(NULL);
     struct tm tm = *localtime(&t);
-    printf("[Thread-%ld] %d-%02d-%02d %02d:%02d:%02d %s\n", pthread_self(), tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, message);
+    printf("%d-%02d-%02d %02d:%02d:%02d %s\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, message);
 }
 
 void log_error(char* message){
