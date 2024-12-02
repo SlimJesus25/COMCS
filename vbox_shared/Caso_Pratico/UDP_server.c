@@ -12,7 +12,7 @@
 #include <string.h>
 #include <pthread.h> // use compilation flag "lpthread"
 #include <cjson/cJSON.h> // sudo apt install libcjson1 libcjson-dev | use compilation flag "lcjson"
-#include "MQTTClient.h"  // sudo apt-get install libpaho-mqtt-dev | use compilation flag "lpaho-mqtt3c" (append an 's' to the final 'c' if using SSL).
+#include <MQTTClient.h>  // sudo apt-get install libpaho-mqtt-dev | use compilation flag "lpaho-mqtt3c" (append an 's' to the final 'c' if using SSL).
 #include "avl.h"
 #include "queue.h"
 #include "utils.h"
@@ -172,16 +172,20 @@ void publish_mqtt(char* alert){
     MQTTClient_message pubmsg = MQTTClient_message_initializer;
     MQTTClient_deliveryToken token;
 
-    pubmsg.payload = alert;
-    pubmsg.payloadlen = (int)strlen(alert);
-    pubmsg.qos = 0;
+    pubmsg.payload = (void*)alert;
+    pubmsg.payloadlen = strlen(alert);
+    pubmsg.qos = 2;
     pubmsg.retained = 0;
 
-    int rv = 0;
+    int rv = MQTTClient_publishMessage(mqtt_client, MQTT_TOPIC, &pubmsg, &token);
+
+    MQTTClient_waitForCompletion(mqtt_client, token, 50);
+
+    // establish_mqtt_broker_connection();
     
-    if((rv = MQTTClient_publishMessage(mqtt_client, MQTT_TOPIC, &pubmsg, NULL)) != MQTTCLIENT_SUCCESS){
+    if(rv != MQTTCLIENT_SUCCESS){
         char msg[strlen("Message was not published to the command center. Error Code: ") + 2];
-        sprintf(msg, "Message was not published to the command center. Error Code: %d", rv);
+        snprintf(msg, sizeof(msg), "Message was not published to the command center. Error Code: %d", rv);
         log_error(msg);
         if(rv == MQTTCLIENT_DISCONNECTED){
             log_info("Trying to reconnect...");
@@ -189,14 +193,17 @@ void publish_mqtt(char* alert){
             log_info("Reconnected successfully!");
         }
     }
+
+    // MQTTClient_disconnect(mqtt_client, 1000);
+    // MQTTClient_destroy(&mqtt_client);
 }
 
 /**
  * This function invokes 'publish_mqtt'. It contains a generic text to temperature/humidity alerts.
  */
 void alert_anomaly(char* metric, double value, int bound, char* verb){
-    char* alert = (char*)calloc(100, sizeof(char));
-    sprintf(alert, "%s %s the usual rate of %d with %.2f", metric, verb, bound, value);
+    char alert[256]; // = (char*)calloc(100, sizeof(char));
+    snprintf(alert, sizeof(alert), "%s %s the usual rate of %d with %.2f", metric, verb, bound, value);
     log_warning(alert);
     publish_mqtt(alert);
     // free(alert);
@@ -257,9 +264,9 @@ void* handle_client_request_master(void *arg){
         }while(queue_size(&queue) < size);
                 
         
-        smart_data_t* items = (smart_data_t*)calloc(size, sizeof(smart_data_t));
+        smart_data_t items[size]; // = (smart_data_t*)calloc(size, sizeof(smart_data_t));
         for(int i=0;i<size;i++){
-            *(items+i) = *(peek(&queue));
+            items[i] = *(peek(&queue));
             dequeue(&queue);
         }
 
@@ -272,19 +279,19 @@ void* handle_client_request_master(void *arg){
 
         double temperatures[size], humidities[size];
 
-        timestamp_t* ts = (timestamp_t*)calloc(size, sizeof(timestamp_t));
+        timestamp_t ts[size]; // = (timestamp_t*)calloc(size, sizeof(timestamp_t));
         for(int i=0;i<size;i++)
-            decode_date_observed((items+i)->dateObserved, ts+i);
+            decode_date_observed(items[i].dateObserved, ts+i);
         
         int sensor_degraded = 0;
         for(int i=0;i<=size/2;i++){
-            temperatures[i] = (items+i)->temperature;
-            humidities[i] = (items+i)->humidity;
+            temperatures[i] = items[i].temperature;
+            humidities[i] = items[i].humidity;
             for(int j=i+1;j<size;j++){
                 long diff;
-                if((diff = calculate_time_difference(*(ts+i), *(ts+j))) > MARGIN_ERROR_MS){
-                    char* anomaly_msg = (char*)calloc(strlen("A sensor is degraded ( milliseconds)") + (int)log10(diff) + 1, sizeof(char));
-                    sprintf(anomaly_msg, "A sensor is degraded (%ld milliseconds)", diff);
+                if((diff = calculate_time_difference(ts[i], ts[j])) > MARGIN_ERROR_MS){
+                    char anomaly_msg[256]; // = (char*)calloc(strlen("A sensor is degraded ( milliseconds)") + (int)log10(diff) + 1, sizeof(char));
+                    snprintf(anomaly_msg, sizeof(anomaly_msg), "A sensor is degraded (%ld milliseconds)", diff);
                     alert_anomaly_generic(anomaly_msg);
                     sensor_degraded = 1;
                     // free(anomaly_msg);
@@ -327,14 +334,14 @@ void handle_client_request_slave(void *arg){
     }
     
     // 2. Allocates memory to the argument (that fits into smart data standards).
-    smart_data_t *conv_arg;
-    conv_arg = calloc(1, sizeof(smart_data_t));
+    smart_data_t conv_arg;
+    // conv_arg = calloc(1, sizeof(smart_data_t));
 
     for(int i=0;i<SMART_DATA_FIELDS;i++)
-        retrieve_data_from_json(json, types[i], fields[i], conv_arg);
+        retrieve_data_from_json(json, types[i], fields[i], &conv_arg);
 
     pthread_mutex_lock(&tree_size_mutex);
-    enqueue(&queue, *(conv_arg));
+    enqueue(&queue, conv_arg);
     pthread_mutex_unlock(&tree_size_mutex);
 
     pthread_cond_signal(&signal);
@@ -368,6 +375,9 @@ int main(void){
         exit(EXIT_FAILURE);
     }
 
+
+    MQTTClient_disconnect(mqtt_client, 1000);
+    MQTTClient_destroy(&mqtt_client);
     establish_mqtt_broker_connection();
 
     initializeQueue(&queue);
@@ -441,7 +451,7 @@ int main(void){
             entry.value = atoi(line1);
             database = insertNode(database, entry);
             char msg[40];
-            sprintf(msg, "New client %s with QoS %d", entry.key, entry.value);
+            snprintf(msg, sizeof(msg), "New client %s with QoS %d", entry.key, entry.value);
             log_info(msg);
             pthread_mutex_unlock(&database_mutex);
             continue;
